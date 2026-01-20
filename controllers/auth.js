@@ -5,6 +5,7 @@ const bcrypt = require('bcrypt');
 const User = require('../models/user');
 const jwt = require('jsonwebtoken');
 
+TESTTT BRANCH
 
 const saltRounds = 12;  // Salting is where a random string of characters is added to the password before hashing it.  
 
