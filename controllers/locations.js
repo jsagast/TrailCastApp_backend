@@ -49,7 +49,7 @@ router.post("/", verifyToken, async (req, res) => {
   }
 });
 
-router.get("/:locationId", verifyToken, async (req, res) => {
+router.get("/:locationId", async (req, res) => {
   try {
     const location = await Location.findById(req.params.locationId).populate([
       'author',
