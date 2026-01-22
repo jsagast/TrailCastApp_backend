@@ -47,7 +47,7 @@ router.get('/places', async (req, res) => {
   }
 });
 
-router.get('/place/weather', async (req, res) => {
+router.get('/weather', async (req, res) => {
   try {
     const { lat, lon, name } = req.query;
 
