@@ -35,7 +35,9 @@ router.get('/places', async (req, res) => {
 
     const places = data.features.map(feature => ({
       name: feature.properties.formatted,
-      place_id: feature.properties.place_id
+      place_id: feature.properties.place_id,
+      longitude:feature.properties.lon,
+      latitude:feature.properties.lat,
     }));
 
     res.json({ places });
@@ -45,33 +47,29 @@ router.get('/places', async (req, res) => {
   }
 });
 
-router.get('/place/:placeId/weather', async (req, res) => {
+router.get('/place/weather', async (req, res) => {
   try {
-    const placeId = req.params.placeId;
+    const { lat, lon, name } = req.query;
 
-    const categoriesResponse = await fetch(
-      `https://api.geoapify.com/v2/places?categories=ski,natural&filter=place:${placeId}&limit=5&apiKey=${API_KEY}`
-    );
-    const categoriesData = await categoriesResponse.json();
-    const feature = categoriesData.features?.[0];
-
-    if (!feature) {
-      throw new Error("No location found");
+    if (!lat || !lon) {
+      return res.status(400).json({ err: "lat and lon are required" });
     }
-
-    const { lon, lat, name } = feature.properties;
 
     const pointsResponse = await fetch(`https://api.weather.gov/points/${lat},${lon}`);
     const pointsData = await pointsResponse.json();
+
     const forecastUrl = pointsData.properties.forecast;
 
     const forecastResponse = await fetch(forecastUrl);
     const forecastData = await forecastResponse.json();
-    const weather = forecastData.properties.periods.slice(0, 5);
+
+    const weather = forecastData.properties.periods;
 
     res.json({
       location: {
         name,
+        lat,
+        lon,
         forecast: weather
       }
     });
@@ -80,6 +78,7 @@ router.get('/place/:placeId/weather', async (req, res) => {
     res.status(500).json({ err: err.message });
   }
 });
+
 
 // posting locations managing orders
 router.post("/", verifyToken, async (req, res) => {
@@ -313,6 +312,43 @@ module.exports = router;
 //     })
     
 //   }catch (err) {
+//     res.status(500).json({ err: err.message });
+//   }
+// });
+
+
+// router.get('/place/:placeId/weather', async (req, res) => {
+//   try {
+//     const placeId = req.params.placeId;
+
+//     const categoriesResponse = await fetch(
+//       `https://api.geoapify.com/v2/places?categories=ski,natural&filter=place:${placeId}&limit=5&apiKey=${API_KEY}`
+//     );
+//     const categoriesData = await categoriesResponse.json();
+//     const feature = categoriesData.features?.[0];
+
+//     if (!feature) {
+//       throw new Error("No location found");
+//     }
+
+//     const { lon, lat, name } = feature.properties;
+
+//     const pointsResponse = await fetch(`https://api.weather.gov/points/${lat},${lon}`);
+//     const pointsData = await pointsResponse.json();
+//     const forecastUrl = pointsData.properties.forecast;
+
+//     const forecastResponse = await fetch(forecastUrl);
+//     const forecastData = await forecastResponse.json();
+//     const weather = forecastData.properties.periods.slice(0, 5);
+
+//     res.json({
+//       location: {
+//         name,
+//         forecast: weather
+//       }
+//     });
+//   } catch (err) {
+//     console.error(err);
 //     res.status(500).json({ err: err.message });
 //   }
 // });
