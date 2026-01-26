@@ -5,13 +5,120 @@ const router = express.Router();
 
 const API_KEY = process.env.API_KEY;
 
+// ------------------------------
+// Simple in-memory TTL caches
+// ------------------------------
+const placesCache = new Map();   // key: search string -> { expiresAt, value }
+const pointsCache = new Map();   // key: "lat,lon" -> { expiresAt, value }  (value: forecastUrl)
+const forecastCache = new Map(); // key: forecastUrl -> { expiresAt, value } (value: periods[])
+
+const nowMs = () => Date.now();
+const cacheGet = (map, key) => {
+  const hit = map.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt <= nowMs()) {
+    map.delete(key);
+    return null;
+  }
+  return hit.value;
+};
+const cacheSet = (map, key, value, ttlMs) => {
+  map.set(key, { value, expiresAt: nowMs() + ttlMs });
+};
+
+const roundCoord = (v) => Number(v).toFixed(4);
+const toNum = (v) => (v === "" || v == null ? null : Number(v));
+
+const TTL = {
+  places: 10 * 60 * 1000,          // 10m (autocomplete)
+  points: 7 * 24 * 60 * 60 * 1000, // 7d (points -> forecast URL rarely changes)
+  forecast: 10 * 60 * 1000,        // 10m (forecast refresh cadence)
+};
+
+const NWS_HEADERS = {
+  "User-Agent":
+    process.env.NWS_USER_AGENT ||
+    "Trailcast (example@example.com)", // set NWS_USER_AGENT in prod
+  Accept: "application/geo+json, application/json",
+  "Accept-Language": "en-US",
+};
+
+const fetchJson = async (url, options = {}) => {
+  const res = await fetch(url, options);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    const err = new Error(`Request failed: ${res.status}`);
+    err.status = res.status;
+    err.details = text.slice(0, 300);
+    throw err;
+  }
+  return res.json();
+};
+
+const getForecastForLatLon = async (lat, lon) => {
+  const latNum = toNum(lat);
+  const lonNum = toNum(lon);
+  if (latNum == null || lonNum == null || Number.isNaN(latNum) || Number.isNaN(lonNum)) {
+    const err = new Error("lat and lon must be valid numbers");
+    err.status = 400;
+    throw err;
+  }
+
+  const coordKey = `${roundCoord(latNum)},${roundCoord(lonNum)}`;
+
+  // 1) points -> forecast URL (cache long)
+  let forecastUrl = cacheGet(pointsCache, coordKey);
+  if (!forecastUrl) {
+    const pointsData = await fetchJson(
+      `https://api.weather.gov/points/${latNum},${lonNum}`,
+      { headers: NWS_HEADERS }
+    );
+
+    forecastUrl = pointsData?.properties?.forecast;
+    if (!forecastUrl) {
+      const err = new Error("NWS points response missing forecast URL");
+      err.status = 502;
+      throw err;
+    }
+
+    cacheSet(pointsCache, coordKey, forecastUrl, TTL.points);
+  }
+
+  // 2) forecast URL -> periods (cache short)
+  let periods = cacheGet(forecastCache, forecastUrl);
+  if (!periods) {
+    const forecastData = await fetchJson(forecastUrl, { headers: NWS_HEADERS });
+    periods = forecastData?.properties?.periods ?? [];
+    cacheSet(forecastCache, forecastUrl, periods, TTL.forecast);
+  }
+
+  return periods;
+};
+
+const mapWithConcurrency = async (items, limit, worker) => {
+  const results = new Array(items.length);
+  let idx = 0;
+  const runners = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+    while (true) {
+      const i = idx++;
+      if (i >= items.length) break;
+      results[i] = await worker(items[i], i);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+};
+
+// ------------------------------
+// Routes
+// ------------------------------
+
 // GET ALL LOCATIONS
 router.get("/", async (req, res) => {
   try {
-    // List ordering should be handled inside List.locations[].order.
     const locations = await Location.find({})
       .populate("author")
-      .sort({ createdAt: -1 }); // default sort newest first
+      .sort({ createdAt: -1 });
 
     res.status(200).json(locations);
   } catch (err) {
@@ -19,94 +126,105 @@ router.get("/", async (req, res) => {
   }
 });
 
-// SEARCH LOCATIONS (GEOAPIFY)
+// SEARCH LOCATIONS (GEOAPIFY AUTOCOMPLETE)
 router.get("/places", async (req, res) => {
   try {
-    const search = req.query.search;
+    const search = (req.query.search || "").trim();
     if (!search) {
-      return res.status(400).json({ err: "Search query is required" });
+      return res.status(200).json({ places: [] });
+    }
+    if (!API_KEY) {
+      return res.status(500).json({ err: "Missing API_KEY for Geoapify" });
     }
 
-    const response = await fetch(
-      `https://api.geoapify.com/v1/geocode/search?text=${encodeURIComponent(
-        search
-      )}&filter=countrycode:us&apiKey=${API_KEY}`
-    );
+    const cacheKey = search.toLowerCase();
+    const cached = cacheGet(placesCache, cacheKey);
+    if (cached) return res.json(cached);
 
-    if (!response.ok) {
-      return res.status(response.status).json({ err: "Geoapify request failed" });
-    }
+    const url =
+      `https://api.geoapify.com/v1/geocode/autocomplete?` +
+      `text=${encodeURIComponent(search)}` +
+      `&filter=countrycode:us` +
+      `&limit=10` +
+      `&apiKey=${API_KEY}`;
 
-    const data = await response.json();
+    const data = await fetchJson(url);
 
-    if (!data.features?.length) {
-      return res.status(404).json({ err: "No places found" });
-    }
-
-    const places = data.features.map((feature) => ({
+    const places = (data.features || []).map((feature) => ({
       name: feature.properties.formatted,
       place_id: feature.properties.place_id,
       longitude: feature.properties.lon,
       latitude: feature.properties.lat,
     }));
 
-    res.json({ places });
+    const payload = { places };
+    cacheSet(placesCache, cacheKey, payload, TTL.places);
+
+    // Important: empty results are NOT an error for autocomplete UX
+    return res.json(payload);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ err: err.message });
+    const status = err.status || 500;
+    res.status(status).json({ err: err.message, details: err.details });
   }
 });
 
-// WEATHER (NWS)
+// WEATHER (NWS) - single
 router.get("/weather", async (req, res) => {
   try {
     const { lat, lon, name } = req.query;
-
-    if (!lat || !lon) {
-      return res.status(400).json({ err: "lat and lon are required" });
-    }
-
-    const pointsResponse = await fetch(`https://api.weather.gov/points/${lat},${lon}`);
-
-    // Handle non-200 from NWS
-    if (!pointsResponse.ok) {
-      const text = await pointsResponse.text(); // may be HTML
-      return res.status(pointsResponse.status).json({
-        err: "NWS points request failed",
-        details: text.slice(0, 200),
-      });
-    }
-
-    const pointsData = await pointsResponse.json();
-    const forecastUrl = pointsData?.properties?.forecast;
-
-    if (!forecastUrl) {
-      return res.status(502).json({ err: "NWS points response missing forecast URL" });
-    }
-
-    const forecastResponse = await fetch(forecastUrl);
-
-    if (!forecastResponse.ok) {
-      const text = await forecastResponse.text(); // may be HTML
-      return res.status(forecastResponse.status).json({
-        err: "NWS forecast request failed",
-        details: text.slice(0, 200),
-      });
-    }
-
-    const forecastData = await forecastResponse.json();
-    const weather = forecastData?.properties?.periods ?? [];
+    const periods = await getForecastForLatLon(lat, lon);
 
     res.json({
       location: {
         name: name ?? null,
         lat: Number(lat),
         lon: Number(lon),
-        forecast: weather,
+        forecast: periods,
       },
     });
   } catch (err) {
-    console.error(err);
+    const status = err.status || 500;
+    res.status(status).json({ err: err.message, details: err.details });
+  }
+});
+
+// WEATHER (NWS) - batch
+router.post("/weather/batch", async (req, res) => {
+  try {
+    const locations = Array.isArray(req.body?.locations) ? req.body.locations : [];
+    if (!locations.length) return res.json({ results: [] });
+
+    // Keep this conservative to protect NWS (and your server)
+    if (locations.length > 50) {
+      return res.status(413).json({ err: "Too many locations. Max 50." });
+    }
+
+    const results = await mapWithConcurrency(locations, 6, async (loc) => {
+      const lat = loc?.lat ?? loc?.latitude;
+      const lon = loc?.lon ?? loc?.longitude;
+      const name = loc?.name ?? null;
+
+      try {
+        const forecast = await getForecastForLatLon(lat, lon);
+        return {
+          name,
+          lat: Number(lat),
+          lon: Number(lon),
+          forecast,
+        };
+      } catch (e) {
+        return {
+          name,
+          lat: lat != null ? Number(lat) : null,
+          lon: lon != null ? Number(lon) : null,
+          forecast: null,
+          error: e.message,
+        };
+      }
+    });
+
+    res.json({ results });
+  } catch (err) {
     res.status(500).json({ err: err.message });
   }
 });
@@ -114,7 +232,6 @@ router.get("/weather", async (req, res) => {
 // CREATE LOCATION
 router.post("/", verifyToken, async (req, res) => {
   try {
-    // ordering for a list should happen inside List.locations[].order.
     const location = await Location.create({
       ...req.body,
       author: req.user._id,
@@ -156,9 +273,6 @@ router.put("/:locationId", verifyToken, async (req, res) => {
       req.body,
       { new: true }
     ).populate("author");
-
-    // If you need the author populated as the current user immediately:
-    // updatedLocation._doc.author = req.user;
 
     res.status(200).json(updatedLocation);
   } catch (err) {
@@ -209,11 +323,9 @@ router.put("/:locationId/comments/:commentId", verifyToken, async (req, res) => 
     const location = await Location.findById(req.params.locationId);
     if (!location) return res.status(404).json({ err: "Location not found" });
 
-    // FIX: lookup by commentId (not locationId)
     const comment = location.comments.id(req.params.commentId);
     if (!comment) return res.status(404).json({ err: "Comment not found" });
 
-    // FIX: authorize against comment author (not location author)
     if (!comment.author.equals(req.user._id)) {
       return res.status(403).json({
         message: "You are not authorized to change this comment, you're not the author",
@@ -242,7 +354,6 @@ router.delete("/:locationId/comments/:commentId", verifyToken, async (req, res) 
       return res.status(403).json({ message: "You are not authorized to delete this comment" });
     }
 
-    // FIX: pull is safer / cleaner than remove({ _id: ... })
     location.comments.pull(req.params.commentId);
     await location.save();
 
@@ -278,11 +389,9 @@ router.put("/:locationId/logs/:logId", verifyToken, async (req, res) => {
     const location = await Location.findById(req.params.locationId);
     if (!location) return res.status(404).json({ err: "Location not found" });
 
-    // FIX: logs, not comments
     const log = location.logs.id(req.params.logId);
     if (!log) return res.status(404).json({ err: "Log not found" });
 
-    // FIX: authorize against log author
     if (!log.author.equals(req.user._id)) {
       return res.status(403).json({
         message: "You are not authorized to change this activity, you're not the author",

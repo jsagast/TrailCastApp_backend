@@ -5,9 +5,7 @@ const Location = require("../models/location.js");
 
 const router = express.Router();
 
-/**
- * Helper: ensure the current user owns the list
- */
+/* Helper: ensure the current user owns the list  */
 async function getOwnedList(listId, userId) {
   const list = await List.findById(listId);
   if (!list) return { error: { status: 404, msg: "List not found" } };
@@ -15,10 +13,7 @@ async function getOwnedList(listId, userId) {
   return { list };
 }
 
-/**
- * GET /lists
- * Get all lists for current user
- */
+/* Get all lists for current user */
 router.get("/", verifyToken, async (req, res) => {
   try {
     const lists = await List.find({ owner: req.user._id })
@@ -31,11 +26,7 @@ router.get("/", verifyToken, async (req, res) => {
   }
 });
 
-/**
- * POST /lists
- * Create a new list
- * body: { name, description? }
- */
+/* Create a new list: body: { name, description? } */
 router.post("/", verifyToken, async (req, res) => {
   try {
     const { name, description = "" } = req.body;
@@ -58,10 +49,7 @@ router.post("/", verifyToken, async (req, res) => {
   }
 });
 
-/**
- * GET /lists/:listId
- * Get one list + populated locations
- */
+/* Get one list + populated location */
 router.get("/:listId", verifyToken, async (req, res) => {
   try {
     const { list, error } = await getOwnedList(req.params.listId, req.user._id);
@@ -87,10 +75,7 @@ router.get("/:listId", verifyToken, async (req, res) => {
   }
 });
 
-/**
- * PUT /lists/:listId
- * Update list metadata (name/description)
- */
+/* Update list metadata (name/description) */
 router.put("/:listId", verifyToken, async (req, res) => {
   try {
     const { list, error } = await getOwnedList(req.params.listId, req.user._id);
@@ -110,10 +95,7 @@ router.put("/:listId", verifyToken, async (req, res) => {
   }
 });
 
-/**
- * DELETE /lists/:listId
- * Delete a list
- */
+/* Delete a list */
 router.delete("/:listId", verifyToken, async (req, res) => {
   try {
     const { list, error } = await getOwnedList(req.params.listId, req.user._id);
@@ -126,9 +108,7 @@ router.delete("/:listId", verifyToken, async (req, res) => {
   }
 });
 
-/**
- * POST /lists/:listId/locations
- * Add a location to a list (create the Location doc if needed)
+/* Add a location to a list (create the Location doc if needed)
  *
  * body can be:
  *   - { locationId }  (if location already exists in DB)
@@ -193,17 +173,15 @@ router.post("/:listId/locations", verifyToken, async (req, res) => {
 
     res.status(201).json({ ...list.toObject(), locations: sorted });
   } catch (err) {
-  // Handles race-condition duplicates from the unique index on (_id, locations.location)
-  if (err.code === 11000) {
-    return res.status(409).json({ err: "Location already in this list" });
+    // Handles race-condition duplicates from the unique index on (_id, locations.location)
+    if (err.code === 11000) {
+      return res.status(409).json({ err: "Location already in this list" });
+    }
+    res.status(500).json({ err: err.message });
   }
-  res.status(500).json({ err: err.message });
-}})
+});
 
-/**
- * DELETE /lists/:listId/locations/:locationId
- * Remove a location from a list
- */
+/* Remove a location from a list */
 router.delete("/:listId/locations/:locationId", verifyToken, async (req, res) => {
   try {
     const { list, error } = await getOwnedList(req.params.listId, req.user._id);
@@ -231,15 +209,7 @@ router.delete("/:listId/locations/:locationId", verifyToken, async (req, res) =>
   }
 });
 
-/**
- * PUT /lists/:listId/reorder
- * Drag/drop reorder
- *
- * body: { orderedLocationIds: ["<locId>", "<locId>", ...] }
- * Must contain exactly the locations currently in the list (same set).
- *
- * This is the simplest, safest approach: renumber 0..n-1 on every reorder.
- */
+/* Drag/drop reorder */
 router.put("/:listId/reorder", verifyToken, async (req, res) => {
   try {
     const { list, error } = await getOwnedList(req.params.listId, req.user._id);
