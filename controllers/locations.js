@@ -35,6 +35,7 @@ router.get("/places", async (req, res) => {
       return res.status(response.status).json({ err: "Geoapify request failed" });
     }
 
+
     const data = await response.json();
 
     if (!data.features?.length) {
