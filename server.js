@@ -10,7 +10,6 @@ const usersRouter=require('./controllers/users');
 const locationsRouter=require('./controllers/locations');
 const listsRouter=require('./controllers/lists');
 
-
 mongoose.connect(process.env.MONGODB_URI);
 
 
@@ -26,8 +25,8 @@ app.use('/users', usersRouter);
 app.use('/locations', locationsRouter);
 app.use('/lists', listsRouter);
 
-// Routes go here
+const PORT = process.env.PORT || 3000;
 
-app.listen(3000, () => {
-  console.log('The express app is ready!');
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
