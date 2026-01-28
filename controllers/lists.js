@@ -115,6 +115,7 @@ router.get("/:listId", verifyToken, async (req, res) => {
     });
 
     await list.populate({ path: "owner", select: "username" });
+    await list.populate({ path: "comments.owner", select: "username" });
 
     const sorted = list.locations
       .slice()
@@ -371,11 +372,15 @@ router.post("/:listId/comments", verifyToken, async (req, res) => {
     list.comments.push(commentData);
     await list.save();
 
-    const newComment = list.comments[list.comments.length - 1];
+    await list.populate({
+      path: "comments.owner",
+      select: "username",
+    });
 
-    await newComment.populate('owner', 'username');
+    const newCommentId = list.comments[list.comments.length - 1]._id;
+    const populatedNewComment = list.comments.id(newCommentId);
 
-    res.status(201).json(newComment);
+    res.status(201).json(populatedNewComment);
   } catch (err) {
     res.status(500).json({ err: err.message });
   }

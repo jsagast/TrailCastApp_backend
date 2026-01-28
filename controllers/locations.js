@@ -289,7 +289,6 @@ router.get('/by-coords', async (req, res) => {
   const { lat, lon } = req.query;
 
   console.log(lat,lon);
-  
 
   if (!lat || !lon) {
     return res.status(400).json({ error: 'Latitude and longitude are required' });
