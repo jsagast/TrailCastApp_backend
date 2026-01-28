@@ -232,6 +232,7 @@ router.post("/weather/batch", async (req, res) => {
 // CREATE LOCATION
 router.post("/", verifyToken, async (req, res) => {
   try {
+    console.log(req.body)
     const location = await Location.create({
       ...req.body,
       author: req.user._id,
@@ -299,15 +300,6 @@ router.get('/by-coords', async (req, res) => {
       latitude: Number(lat),
       longitude: Number(lon),
     }).populate('activities.author', 'username'); 
-
-    const comment = location.comments.id(req.params.commentId);
-    if (!comment) return res.status(404).json({ err: "Comment not found" });
-
-    if (!comment.author.equals(req.user._id)) {
-      return res.status(403).json({
-        message: "You are not authorized to change this comment, you're not the author",
-      });
-    }
 
     res.status(200).json(location);
   } catch (err) {
@@ -391,81 +383,15 @@ router.delete("/:locationId/activities/:activityId", verifyToken, async (req, re
       return res.status(403).json({ message: "You are not authorized to delete this comment" });
     }
 
-    location.comments.pull(req.params.commentId);
-    await location.save();
-
-    res.status(200).json({ message: "Comment deleted successfully" });
-  } catch (err) {
-    res.status(500).json({ err: err.message });
-  }
-});
-
-// CREATE LOG
-router.post("/:locationId/logs", verifyToken, async (req, res) => {
-  try {
-    req.body.author = req.user._id;
-
-    const location = await Location.findById(req.params.locationId);
-    if (!location) return res.status(404).json({ err: "Location not found" });
-
-    location.logs.push(req.body);
-    await location.save();
-
-    const newLog = location.logs[location.logs.length - 1];
-    newLog._doc.author = req.user;
-
-    res.status(201).json(newLog);
-  } catch (err) {
-    res.status(500).json({ err: err.message });
-  }
-});
-
-// UPDATE LOG
-router.put("/:locationId/logs/:logId", verifyToken, async (req, res) => {
-  try {
-    const location = await Location.findById(req.params.locationId);
-    if (!location) return res.status(404).json({ err: "Location not found" });
-
-    const log = location.logs.id(req.params.logId);
-    if (!log) return res.status(404).json({ err: "Log not found" });
-
-    if (!log.author.equals(req.user._id)) {
-      return res.status(403).json({
-        message: "You are not authorized to change this activity, you're not the author",
-      });
-    }
-
-    log.text = req.body.text;
-    await location.save();
-
-    res.status(200).json(log);
-  } catch (err) {
-    res.status(500).json({ err: err.message });
-  }
-});
-
-// DELETE LOG
-router.delete("/:locationId/logs/:logId", verifyToken, async (req, res) => {
-  try {
-    const location = await Location.findById(req.params.locationId);
-    if (!location) return res.status(404).json({ err: "Location not found" });
-
-    const log = location.logs.id(req.params.logId);
-    if (!log) return res.status(404).json({ err: "Log not found" });
-
-    if (!log.author.equals(req.user._id)) {
-      return res.status(403).json({ message: "You are not authorized to delete this activity" });
-    }
-
-    location.logs.pull(req.params.logId);
+    location.activities.pull(req.params.activityId);
     await location.save();
 
     res.status(200).json({ message: "Activity deleted successfully" });
   } catch (err) {
-    console.error("Update activity error:", err);
     res.status(500).json({ err: err.message });
   }
 });
+
 
 
 
