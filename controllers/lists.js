@@ -364,7 +364,8 @@ router.put("/:listId/reorder", verifyToken, async (req, res) => {
 
 router.post("/:listId/comments", verifyToken, async (req, res) => {
   try {
-    const { list, error } = await getOwnedList(req.params.listId, req.user._id);
+    const { list, error } = await getListById(req.params.listId, req.user._id);
+    // const { list, error } = await getOwnedList(req.params.listId, req.user._id);
     if (error) return res.status(error.status).json({ err: error.msg });
 
     // Save owner in the comment
@@ -389,7 +390,8 @@ router.post("/:listId/comments", verifyToken, async (req, res) => {
 // UPDATE COMMENT
 router.put("/:listId/comments/:commentId", verifyToken, async (req, res) => {
   try {
-    const { list, error } = await getOwnedList(req.params.listId, req.user._id);
+    const { list, error } = await getListById(req.params.listId, req.user._id);
+    // const { list, error } = await getOwnedList(req.params.listId, req.user._id);
     if (error) return res.status(error.status).json({ err: error.msg });
 
     const comment = list.comments.id(req.params.commentId);
@@ -424,7 +426,8 @@ router.put("/:listId/comments/:commentId", verifyToken, async (req, res) => {
 // DELETE COMMENT
 router.delete("/:listId/comments/:commentId", verifyToken, async (req, res) => {
   try {
-    const { list, error } = await getOwnedList(req.params.listId, req.user._id);
+    // const { list, error } = await getOwnedList(req.params.listId, req.user._id);
+    const { list, error } = await getListById(req.params.listId, req.user._id);
     if (error) return res.status(error.status).json({ err: error.msg });
 
     const comment = list.comments.id(req.params.commentId);
