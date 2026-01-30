@@ -232,7 +232,6 @@ router.post("/weather/batch", async (req, res) => {
 // CREATE LOCATION
 router.post("/", verifyToken, async (req, res) => {
   try {
-    console.log(req.body)
     const location = await Location.create({
       ...req.body,
       author: req.user._id,
@@ -288,8 +287,6 @@ router.delete("/:locationId", verifyToken, async (req, res) => {
 
 router.get('/by-coords', async (req, res) => {
   const { lat, lon } = req.query;
-
-  console.log(lat,lon);
 
   if (!lat || !lon) {
     return res.status(400).json({ error: 'Latitude and longitude are required' });
